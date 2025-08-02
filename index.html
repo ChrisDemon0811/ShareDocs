@@ -227,6 +227,7 @@
         });
         alert('Upload thành công!');
         loadFiles();
+        updateStorageUsage();
     }
 
     // Xóa file khỏi Cloudinary và Firestore
@@ -249,6 +250,7 @@
 
         alert('Đã xóa file!');
         loadFiles();
+        updateStorageUsage();
     }
 
     // Hiển thị danh sách file (cập nhật thêm nút xóa, ngày giờ, tên người upload)
@@ -593,6 +595,83 @@
             document.getElementById('changePasswordBtn').style.display = 'none';
         }
     });
+
+    const MAX_STORAGE = 25 * 1024 * 1024 * 1024; // 25GB
+
+    async function updateStorageUsage() {
+        if (!window.isAdmin) {
+            document.getElementById('storageUsagePanel').style.display = 'none';
+            return;
+        }
+        const filesSnap = await getDocs(collection(db, 'files'));
+        let total = 0;
+        filesSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.size) total += data.size;
+        });
+        const percent = Math.min(100, (total / MAX_STORAGE) * 100);
+        document.getElementById('storageUsageText').innerText =
+            `${formatFileSize(total)} / ${formatFileSize(MAX_STORAGE)} (${percent.toFixed(1)}%)`;
+        document.getElementById('storageUsageBar').style.width = percent + '%';
+        document.getElementById('storageUsagePanel').style.display = 'block';
+    }
+
+    // Gọi khi là admin và mỗi lần upload/xóa file
+    onAuthStateChanged(auth, user => {
+        if (user && window.isAdmin) updateStorageUsage();
+    });
+    window.updateStorageUsage = updateStorageUsage; // để gọi lại sau khi upload/xóa
+
+    // Sau khi upload hoặc xóa file, gọi updateStorageUsage()
+    async function handleFileUpload(file, title) {
+        if (!auth.currentUser) {
+            alert('Bạn cần đăng nhập để upload file!');
+            return;
+        }
+
+        // 1. Upload file lên Cloudinary
+        const cloudName = 'dshiv2dfx'; // Thay bằng cloud name của bạn
+        const uploadPreset = 'docs_unsigned'; // Thay bằng upload preset của bạn
+
+        const url = `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', uploadPreset);
+
+        let cloudinaryRes;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                body: formData
+            });
+            cloudinaryRes = await res.json();
+            if (!cloudinaryRes.secure_url) throw new Error('Upload thất bại');
+        } catch (err) {
+            alert('Lỗi upload Cloudinary: ' + err.message);
+            return;
+        }
+
+        // 2. Lưu thông tin file vào Firestore
+        await addDoc(collection(db, 'files'), {
+            name: file.name,
+            title: title,
+            url: cloudinaryRes.secure_url,
+            size: file.size,
+            type: file.type,
+            uploadedBy: auth.currentUser.uid,
+            uploadedAt: serverTimestamp(),
+            public_id: cloudinaryRes.public_id
+        });
+        alert('Upload thành công!');
+        loadFiles();
+        updateStorageUsage();
+    }
+    async function deleteFile(docId, publicId, uploadedBy) {
+        // ...existing code...
+        alert('Đã xóa file!');
+        loadFiles();
+        updateStorageUsage();
+    }
 
     function formatFileSize(size) {
         if (size >= 1024 * 1024 * 1024) {
@@ -1084,6 +1163,13 @@
 
         <div id="adminPanel" class="admin-panel" style="display: none;">
             <h3>Quản trị viên</h3>
+            <div id="storageUsagePanel" style="display:none; margin-bottom:15px;">
+                <div style="font-weight:500; margin-bottom:5px;">Dung lượng đã dùng:</div>
+                <div style="background:#eee; border-radius:6px; overflow:hidden; height:22px;">
+                    <div id="storageUsageBar" style="background:#4285f4;height:100%;width:0%;transition:width 0.5s;"></div>
+                </div>
+                <div id="storageUsageText" style="margin-top:5px; font-size:0.95rem; color:#333;"></div>
+            </div>
             <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
         </div>
 
@@ -1182,6 +1268,13 @@
     <!-- Admin Panel (hidden by default) -->
     <div class="admin-panel" id="adminPanel" style="display: none;">
         <h3>Quản trị viên</h3>
+        <div id="storageUsagePanel" style="display:none; margin-bottom:15px;">
+            <div style="font-weight:500; margin-bottom:5px;">Dung lượng đã dùng:</div>
+            <div style="background:#eee; border-radius:6px; overflow:hidden; height:22px;">
+                <div id="storageUsageBar" style="background:#4285f4;height:100%;width:0%;transition:width 0.5s;"></div>
+            </div>
+            <div id="storageUsageText" style="margin-top:5px; font-size:0.95rem; color:#333;"></div>
+        </div>
         <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
     </div>
 
