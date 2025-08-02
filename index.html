@@ -227,6 +227,7 @@
         });
         alert('Upload thành công!');
         loadFiles();
+        updateStorageUsage();
     }
 
     // Xóa file khỏi Cloudinary và Firestore
@@ -249,6 +250,7 @@
 
         alert('Đã xóa file!');
         loadFiles();
+        updateStorageUsage();
     }
 
     // Hiển thị danh sách file (cập nhật thêm nút xóa, ngày giờ, tên người upload)
@@ -591,6 +593,35 @@
             document.getElementById('userSettings').style.display = 'none';
             document.getElementById('changeNameBtn').style.display = 'none';
             document.getElementById('changePasswordBtn').style.display = 'none';
+        }
+    });
+
+    const MAX_STORAGE = 25 * 1024 * 1024 * 1024; // 25GB
+
+    async function updateStorageUsage() {
+        if (!window.isAdmin) {
+            document.getElementById('storageUsagePanel').style.display = 'none';
+            return;
+        }
+        const filesSnap = await getDocs(collection(db, 'files'));
+        let total = 0;
+        filesSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.size) total += data.size;
+        });
+        const percent = Math.min(100, (total / MAX_STORAGE) * 100);
+        document.getElementById('storageUsageText').innerText =
+            `${formatFileSize(total)} / ${formatFileSize(MAX_STORAGE)} (${percent.toFixed(1)}%)`;
+        document.getElementById('storageUsageBar').style.width = percent + '%';
+        document.getElementById('storageUsagePanel').style.display = 'block';
+    }
+
+    // Gọi khi là admin và mỗi lần upload/xóa file
+    onAuthStateChanged(auth, async user => {
+        if (user) {
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            window.isAdmin = userDoc.exists() && userDoc.data().isAdmin;
+            if (window.isAdmin) updateStorageUsage();
         }
     });
 
@@ -1084,6 +1115,14 @@
 
         <div id="adminPanel" class="admin-panel" style="display: none;">
             <h3>Quản trị viên</h3>
+            <!-- Thanh hiển thị dung lượng -->
+            <div id="storageUsagePanel" style="display:none; margin-bottom:15px;">
+                <div style="font-weight:500; margin-bottom:5px;">Dung lượng đã dùng:</div>
+                <div style="background:#eee; border-radius:6px; overflow:hidden; height:22px;">
+                    <div id="storageUsageBar" style="background:#4285f4;height:100%;width:0%;transition:width 0.5s;"></div>
+                </div>
+                <div id="storageUsageText" style="margin-top:5px; font-size:0.95rem; color:#333;"></div>
+            </div>
             <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
         </div>
 
@@ -1182,6 +1221,14 @@
     <!-- Admin Panel (hidden by default) -->
     <div class="admin-panel" id="adminPanel" style="display: none;">
         <h3>Quản trị viên</h3>
+        <!-- Thanh hiển thị dung lượng -->
+        <div id="storageUsagePanel" style="display:none; margin-bottom:15px;">
+            <div style="font-weight:500; margin-bottom:5px;">Dung lượng đã dùng:</div>
+            <div style="background:#eee; border-radius:6px; overflow:hidden; height:22px;">
+                <div id="storageUsageBar" style="background:#4285f4;height:100%;width:0%;transition:width 0.5s;"></div>
+            </div>
+            <div id="storageUsageText" style="margin-top:5px; font-size:0.95rem; color:#333;"></div>
+        </div>
         <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
     </div>
 
