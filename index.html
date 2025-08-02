@@ -1,0 +1,1271 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShareDocs - Chia sẻ tài liệu</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="https://sf-static.upanhlaylink.com/img/image_20250802b861287e766ce54caaf42fb740b5ed0e.jpg">
+    <script type="module">
+    // Import Firebase SDK
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc, addDoc, collection, getDocs, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+    import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-storage.js";
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+        apiKey: "AIzaSyBssVrhM7m6OKPX9nMLGsK5Ef5NBg-vHXc",
+        authDomain: "sharedoc-9036a.firebaseapp.com",
+        projectId: "sharedoc-9036a",
+        storageBucket: "sharedoc-9036a.firebasestorage.app",
+        messagingSenderId: "121763387103",
+        appId: "1:121763387103:web:6bf567a465321ce95c7b6a",
+        measurementId: "G-YDJYK7MKW3"
+    };
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    // Kiểm tra trạng thái đăng nhập
+    onAuthStateChanged(auth, async user => {
+        if (user) {
+            // Ẩn nút đăng nhập, đăng ký, hiện đăng xuất
+            document.getElementById('loginBtn').style.display = 'none';
+            document.getElementById('signupBtn').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'inline-block';
+            document.getElementById('changeNameBtn').style.display = 'inline-block';
+            document.getElementById('changePasswordBtn').style.display = 'inline-block';
+            document.getElementById('uploadContainer').style.display = 'block';
+
+            // Kiểm tra quyền admin
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            window.isAdmin = userDoc.exists() && userDoc.data().isAdmin;
+            if (window.isAdmin) {
+                document.getElementById('adminPanel').style.display = 'block';
+            } else {
+                document.getElementById('adminPanel').style.display = 'none';
+            }
+        } else {
+            window.isAdmin = false;
+            // Đăng xuất
+            document.getElementById('loginBtn').style.display = 'inline-block';
+            document.getElementById('signupBtn').style.display = 'inline-block';
+            document.getElementById('logoutBtn').style.display = 'none';
+            document.getElementById('changeNameBtn').style.display = 'none';
+            document.getElementById('changePasswordBtn').style.display = 'none';
+            document.getElementById('adminPanel').style.display = 'none';
+            document.getElementById('uploadContainer').style.display = 'none';
+        }
+    });
+
+    // Chỉ admin mới mở modal đăng ký
+    document.getElementById('createUserBtn').addEventListener('click', () => {
+        document.getElementById('signupModal').style.display = 'flex';
+    });
+    document.getElementById('closeSignupModal').addEventListener('click', () => {
+        document.getElementById('signupModal').style.display = 'none';
+    });
+
+    // Đăng ký tài khoản mới (chỉ admin)
+    document.getElementById('signupForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('signupName').value;
+        const email = document.getElementById('signupEmail').value;
+        const password = document.getElementById('signupPassword').value;
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            // Lưu thông tin user vào Firestore
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+                name: name,
+                email: email,
+                isAdmin: false // Mặc định user mới không phải admin
+            });
+            alert('Tạo tài khoản thành công!');
+            document.getElementById('signupModal').style.display = 'none';
+        } catch (error) {
+            alert("Lỗi: " + error.message);
+        }
+    });
+
+    // Đăng nhập
+    document.getElementById('loginBtn').addEventListener('click', () => {
+        document.getElementById('loginModal').style.display = 'flex';
+    });
+    document.getElementById('closeLoginModal').addEventListener('click', () => {
+        document.getElementById('loginModal').style.display = 'none';
+    });
+    document.getElementById('cancelLogin').addEventListener('click', () => {
+        document.getElementById('loginModal').style.display = 'none';
+    });
+    document.getElementById('loginForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const email = document.getElementById('loginEmail').value;
+        const password = document.getElementById('loginPassword').value;
+        signInWithEmailAndPassword(auth, email, password)
+            .then(() => {
+                document.getElementById('loginModal').style.display = 'none';
+                document.getElementById('loginEmail').value = '';
+                document.getElementById('loginPassword').value = '';
+            })
+            .catch((error) => {
+                alert("Lỗi: " + error.message);
+            });
+    });
+
+    // Đăng xuất
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+        auth.signOut().then(() => {
+            window.location.reload();
+        });
+    });
+
+    // Upload file
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadArea = document.getElementById('uploadArea');
+    const filesList = document.getElementById('filesList');
+
+    let selectedFile = null;
+
+    // Click chọn file
+    uploadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+    });
+    uploadArea.addEventListener('click', (e) => {
+        if (e.target === uploadArea) fileInput.click();
+    });
+
+    // Kéo thả file
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+    uploadArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+    });
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            showConfirmUploadModal(e.dataTransfer.files[0]);
+        }
+    });
+
+    // Chọn file từ input
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            showConfirmUploadModal(e.target.files[0]);
+        }
+    });
+
+    // Hiển thị modal xác nhận và nhập tiêu đề
+    function showConfirmUploadModal(file) {
+        selectedFile = file;
+        document.getElementById('fileTitle').value = '';
+        document.getElementById('fileInfoPreview').innerHTML = `
+            <strong>Tên file:</strong> ${file.name}<br>
+            <strong>Kích thước:</strong> ${(file.size/1024).toFixed(1)} KB<br>
+            <strong>Loại:</strong> ${file.type || 'Không xác định'}
+        `;
+        document.getElementById('confirmUploadModal').style.display = 'flex';
+    }
+
+    // Đóng modal xác nhận
+    document.getElementById('closeConfirmUploadModal').onclick =
+    document.getElementById('cancelConfirmUpload').onclick = function() {
+        document.getElementById('confirmUploadModal').style.display = 'none';
+        selectedFile = null;
+    };
+
+    // Xử lý upload khi xác nhận
+    document.getElementById('confirmUploadForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        if (!selectedFile) return;
+        const title = document.getElementById('fileTitle').value.trim();
+        await handleFileUpload(selectedFile, title);
+        document.getElementById('confirmUploadModal').style.display = 'none';
+        selectedFile = null;
+    });
+
+    // Sửa lại hàm handleFileUpload để nhận thêm title
+    async function handleFileUpload(file, title) {
+        if (!auth.currentUser) {
+            alert('Bạn cần đăng nhập để upload file!');
+            return;
+        }
+
+        // 1. Upload file lên Cloudinary
+        const cloudName = 'dshiv2dfx'; // Thay bằng cloud name của bạn
+        const uploadPreset = 'docs_unsigned'; // Thay bằng upload preset của bạn
+
+        const url = `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', uploadPreset);
+
+        let cloudinaryRes;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                body: formData
+            });
+            cloudinaryRes = await res.json();
+            if (!cloudinaryRes.secure_url) throw new Error('Upload thất bại');
+        } catch (err) {
+            alert('Lỗi upload Cloudinary: ' + err.message);
+            return;
+        }
+
+        // 2. Lưu thông tin file vào Firestore
+        await addDoc(collection(db, 'files'), {
+            name: file.name,
+            title: title,
+            url: cloudinaryRes.secure_url,
+            size: file.size,
+            type: file.type,
+            uploadedBy: auth.currentUser.uid,
+            uploadedAt: serverTimestamp(),
+            public_id: cloudinaryRes.public_id
+        });
+        alert('Upload thành công!');
+        loadFiles();
+    }
+
+    // Xóa file khỏi Cloudinary và Firestore
+    async function deleteFile(docId, publicId, uploadedBy) {
+        // Chỉ cho phép admin hoặc người upload xóa
+        const user = auth.currentUser;
+        if (!user) return;
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const isAdmin = userDoc.exists() && userDoc.data().isAdmin;
+        if (user.uid !== uploadedBy && !isAdmin) {
+            alert('Bạn không có quyền xóa file này!');
+            return;
+        }
+
+        // Xóa metadata khỏi Firestore
+        await deleteDoc(doc(db, 'files', docId));
+
+        // Xóa file khỏi Cloudinary (chỉ làm được nếu có backend hoặc dùng API secret, KHÔNG nên làm trên frontend)
+        // Gợi ý: Bạn có thể chỉ xóa metadata, hoặc xây dựng backend nhỏ để xóa file khỏi Cloudinary nếu cần bảo mật
+
+        alert('Đã xóa file!');
+        loadFiles();
+    }
+
+    // Hiển thị danh sách file (cập nhật thêm nút xóa, ngày giờ, tên người upload)
+    async function loadFiles() {
+        filesList.innerHTML = '';
+        const querySnapshot = await getDocs(collection(db, 'files'));
+        if (querySnapshot.empty) {
+            filesList.innerHTML = `<div class="no-files"><p>Bạn chưa có tài liệu nào. Hãy đăng nhập và tải lên tài liệu đầu tiên!</p></div>`;
+            return;
+        }
+        let html = '';
+        for (const docSnap of querySnapshot.docs) {
+            const data = docSnap.data();
+            // Lấy tên người upload
+            let uploaderName = 'Không rõ';
+            if (data.uploadedBy) {
+                const uploaderDoc = await getDoc(doc(db, 'users', data.uploadedBy));
+                if (uploaderDoc.exists()) {
+                    if (uploaderDoc.data().isAdmin) {
+                        uploaderName = 'Admin';
+                    } else {
+                        uploaderName = uploaderDoc.data().name || uploaderDoc.data().email;
+                    }
+                }
+            }
+            // Định dạng ngày giờ
+            let dateStr = '';
+            if (data.uploadedAt && data.uploadedAt.toDate) {
+                const d = data.uploadedAt.toDate();
+                dateStr = d.toLocaleString('vi-VN');
+            }
+            const canDelete = (auth.currentUser && (auth.currentUser.uid === data.uploadedBy || window.isAdmin));
+            let isImage = false;
+            if (data.type && data.type.startsWith('image/')) isImage = true;
+            else {
+                // fallback nếu type không có, kiểm tra đuôi file
+                const ext = getFileExt(data.name).toLowerCase();
+                if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) isImage = true;
+            }
+
+            html += `
+            <div class="file-card">
+                <div class="file-header">
+                    <div class="file-info" style="flex:1;">
+                        <div class="file-title">${data.title ? data.title : '(Không có tiêu đề)'}</div>
+                        <div class="file-name">${data.name}</div>
+                        <div class="file-meta">
+                            ${(data.size/1024).toFixed(1)} KB<br>
+                            Người up: ${uploaderName}<br>
+                            Lúc: ${dateStr}
+                        </div>
+                    </div>
+                    ${isImage ? `<div class="file-thumb-wrap"><img src="${data.url}" alt="${data.title || data.name}" class="file-thumbnail"></div>` : ''}
+                </div>
+                <div class="file-actions">
+                    <a href="${data.url}" target="_blank" class="btn-download">Tải xuống</a>
+                    ${canDelete ? `<button class="btn-delete" data-id="${docSnap.id}" data-publicid="${data.public_id}" data-uid="${data.uploadedBy}">Xóa</button>` : ''}
+                </div>
+            </div>
+            `;
+        }
+        filesList.innerHTML = html;
+
+        // Gán sự kiện xóa file
+        document.querySelectorAll('.btn-delete').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                if (confirm('Bạn chắc chắn muốn xóa file này?')) {
+                    await deleteFile(this.dataset.id, this.dataset.publicid, this.dataset.uid);
+                }
+            });
+        });
+    }
+
+    // Tải file khi đăng nhập thành công
+    onAuthStateChanged(auth, user => {
+        if (user) loadFiles();
+        else filesList.innerHTML = `<div class="no-files"><p>Bạn chưa có tài liệu nào. Hãy đăng nhập và tải lên tài liệu đầu tiên!</p></div>`;
+    });
+
+    // Hiện panel quản lý tài khoản cho admin
+    onAuthStateChanged(auth, async user => {
+        if (user) {
+            // Ẩn nút đăng nhập, đăng ký, hiện đăng xuất
+            document.getElementById('loginBtn').style.display = 'none';
+            document.getElementById('signupBtn').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'block';
+            document.getElementById('uploadContainer').style.display = 'block';
+
+            // Kiểm tra quyền admin
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            window.isAdmin = userDoc.exists() && userDoc.data().isAdmin;
+            if (window.isAdmin) {
+                document.getElementById('adminPanel').style.display = 'block';
+                document.getElementById('adminUsersPanel').style.display = 'block';
+                loadUsersTable();
+            } else {
+                document.getElementById('adminPanel').style.display = 'none';
+                document.getElementById('adminUsersPanel').style.display = 'none';
+            }
+        } else {
+            window.isAdmin = false;
+            // Đăng xuất
+            document.getElementById('loginBtn').style.display = 'block';
+            document.getElementById('signupBtn').style.display = 'none'; // Ẩn nút đăng ký với user thường
+            document.getElementById('logoutBtn').style.display = 'none';
+            document.getElementById('adminPanel').style.display = 'none';
+            document.getElementById('uploadContainer').style.display = 'none';
+            document.getElementById('adminUsersPanel').style.display = 'none';
+        }
+    });
+
+    // Load danh sách user
+    async function loadUsersTable() {
+        const usersTableBody = document.getElementById('usersTableBody');
+        usersTableBody.innerHTML = '<tr><td colspan="4">Đang tải...</td></tr>';
+        const usersSnap = await getDocs(collection(db, 'users'));
+        let html = '';
+        usersSnap.forEach(docSnap => {
+            const u = docSnap.data();
+            html += `<tr>
+                <td>${u.email}</td>
+                <td>${u.name || ''}</td>
+                <td>${u.isAdmin ? '✔️' : ''}</td>
+                <td>
+                    ${u.isAdmin ? '' : `<button class="btn-delete-user" data-uid="${docSnap.id}">Xóa</button>`}
+                </td>
+            </tr>`;
+        });
+        usersTableBody.innerHTML = html;
+
+        // Gán sự kiện xóa user
+        document.querySelectorAll('.btn-delete-user').forEach(btn => {
+            btn.onclick = async function() {
+                if (confirm('Bạn chắc chắn muốn xóa tài khoản này?')) {
+                    await deleteDoc(doc(db, 'users', this.dataset.uid));
+                    loadUsersTable();
+                }
+            };
+        });
+    }
+
+    // Làm mới danh sách user
+    document.getElementById('refreshUsersBtn').onclick = loadUsersTable;
+
+    // Thêm user mới (chỉ lưu vào Firestore, không tạo tài khoản đăng nhập thực sự)
+    document.getElementById('adminAddUserForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const name = document.getElementById('adminAddName').value;
+        const email = document.getElementById('adminAddEmail').value;
+        const password = document.getElementById('adminAddPassword').value;
+        try {
+            // Tạo tài khoản đăng nhập thực sự
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+                name, email, isAdmin: false
+            });
+            alert('Đã thêm tài khoản!');
+            this.reset();
+            loadUsersTable();
+        } catch (err) {
+            alert('Lỗi: ' + err.message);
+        }
+    });
+
+    function getFileExt(filename) {
+        if (!filename) return '';
+        const ext = filename.split('.').pop().toUpperCase();
+        if (ext.length > 6) return ext.slice(0, 6) + '...';
+        return ext;
+    }
+
+    // Xử lý sự kiện xác nhận tải lên file
+    document.getElementById('confirmUploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = document.getElementById('fileTitle').value;
+        const file = window.selectedFile;
+        if (!file) return;
+
+        // 1. Upload file lên Cloudinary
+        const cloudName = 'dshiv2dfx'; // Thay bằng cloud name của bạn
+        const uploadPreset = 'docs_unsigned'; // Xem hướng dẫn bên dưới
+
+        const url = `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', uploadPreset);
+
+        let cloudinaryRes;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                body: formData
+            });
+            cloudinaryRes = await res.json();
+            if (!cloudinaryRes.secure_url) throw new Error('Upload thất bại');
+        } catch (err) {
+            alert('Lỗi upload Cloudinary: ' + err.message);
+            return;
+        }
+
+        // 2. Lưu thông tin file vào Firestore
+        await addDoc(collection(db, 'files'), {
+            name: title,
+            url: cloudinaryRes.secure_url,
+            size: file.size,
+            type: file.type,
+            uploadedBy: auth.currentUser.uid,
+            uploadedAt: serverTimestamp(),
+            public_id: cloudinaryRes.public_id // thêm dòng này
+        });
+        alert('Upload thành công!');
+        document.getElementById('confirmUploadModal').style.display = 'none';
+        loadFiles();
+    });
+
+    // Đóng modal xác nhận
+    document.getElementById('closeConfirmUploadModal').addEventListener('click', () => {
+        document.getElementById('confirmUploadModal').style.display = 'none';
+    });
+    document.getElementById('cancelConfirmUpload').addEventListener('click', () => {
+        document.getElementById('confirmUploadModal').style.display = 'none';
+    });
+
+    // Tính năng quản lý người dùng (Admin)
+    document.getElementById('refreshUsersBtn').addEventListener('click', loadUsers);
+
+    async function loadUsers() {
+        const usersTableBody = document.getElementById('usersTableBody');
+        usersTableBody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Đang tải dữ liệu...</td></tr>';
+        const usersSnapshot = await getDocs(collection(db, 'users'));
+        usersTableBody.innerHTML = '';
+        usersSnapshot.forEach(doc => {
+            const data = doc.data();
+            usersTableBody.innerHTML += `
+                <tr>
+                    <td>${data.email}</td>
+                    <td>${data.name}</td>
+                    <td>${data.isAdmin ? 'Có' : 'Không'}</td>
+                    <td>
+                        <button class="btn-delete-user" data-id="${doc.id}" style="background:none;border:none;color:#ea4335;cursor:pointer;">Xóa</button>
+                    </td>
+                </tr>
+            `;
+        });
+        // Gán sự kiện xóa tài khoản
+        document.querySelectorAll('.btn-delete-user').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const userId = this.dataset.id;
+                if (confirm('Bạn chắc chắn muốn xóa tài khoản này?')) {
+                    deleteUserAccount(userId);
+                }
+            });
+        });
+    }
+
+    async function deleteUserAccount(userId) {
+        // Chỉ admin mới có quyền xóa tài khoản người dùng khác
+        if (!window.isAdmin) {
+            alert('Bạn không có quyền thực hiện hành động này!');
+            return;
+        }
+        try {
+            // Xóa tài khoản khỏi Firestore
+            await deleteDoc(doc(db, 'users', userId));
+            alert('Đã xóa tài khoản người dùng!');
+            loadUsers();
+        } catch (error) {
+            alert('Lỗi: ' + error.message);
+        }
+    }
+
+    // Mặc định tải danh sách người dùng khi trang được tải
+    window.addEventListener('load', () => {
+        if (window.isAdmin) {
+            document.getElementById('adminPanel').style.display = 'block';
+            loadUsers();
+        }
+    });
+
+    // Tính năng thay đổi thông tin người dùng
+    document.getElementById('changeNameBtn').onclick = () => {
+        document.getElementById('changeNameModal').style.display = 'flex';
+    };
+    document.getElementById('closeChangeNameModal').onclick =
+    document.getElementById('cancelChangeName').onclick = () => {
+        document.getElementById('changeNameModal').style.display = 'none';
+    };
+    document.getElementById('changeNameForm').onsubmit = async function(e) {
+        e.preventDefault();
+        const newName = document.getElementById('newDisplayName').value.trim();
+        if (!newName) return;
+        const user = auth.currentUser;
+        if (!user) return;
+        await setDoc(doc(db, 'users', user.uid), { name: newName }, { merge: true });
+        alert('Đã đổi tên!');
+        document.getElementById('changeNameModal').style.display = 'none';
+        loadFiles();
+    };
+
+    // Tính năng đổi mật khẩu
+    document.getElementById('changePasswordBtn').onclick = () => {
+        document.getElementById('changePasswordModal').style.display = 'flex';
+    };
+    document.getElementById('closeChangePasswordModal').onclick =
+    document.getElementById('cancelChangePassword').onclick = () => {
+        document.getElementById('changePasswordModal').style.display = 'none';
+    };
+    document.getElementById('changePasswordForm').onsubmit = async function(e) {
+        e.preventDefault();
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const user = auth.currentUser;
+        if (!user || !user.email) return;
+        try {
+            // Re-authenticate
+            const credential = EmailAuthProvider.credential(user.email, currentPassword);
+            await reauthenticateWithCredential(user, credential);
+            await updatePassword(user, newPassword);
+            alert('Đổi mật khẩu thành công!');
+            document.getElementById('changePasswordModal').style.display = 'none';
+        } catch (err) {
+            alert('Lỗi: ' + err.message);
+        }
+    };
+
+    // Kiểm tra trạng thái đăng nhập và hiển thị/ẩn các phần tương ứng
+    onAuthStateChanged(auth, async user => {
+        if (user) {
+            document.getElementById('userSettings').style.display = 'block';
+            document.getElementById('changeNameBtn').style.display = 'inline-block';
+            document.getElementById('changePasswordBtn').style.display = 'inline-block';
+        } else {
+            document.getElementById('userSettings').style.display = 'none';
+            document.getElementById('changeNameBtn').style.display = 'none';
+            document.getElementById('changePasswordBtn').style.display = 'none';
+        }
+    });
+    </script>
+    <style>
+        :root {
+            --primary-color: #4285f4;
+            --secondary-color: #34a853;
+            --danger-color: #ea4335;
+            --light-color: #f8f9fa;
+            --dark-color: #343a40;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Roboto', sans-serif;
+        }
+        
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        header {
+            background-color: white;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+        
+        .logo img {
+            margin-right: 10px;
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            object-position: center;
+            border-radius: 8px; /* bo góc nhẹ cho đẹp */
+        }
+        
+        .nav-links {
+            display: flex;
+            list-style: none;
+        }
+        
+        .nav-links li {
+            margin-left: 20px;
+        }
+        
+        .nav-links a {
+            text-decoration: none;
+            color: var(--dark-color);
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: var(--primary-color);
+        }
+        
+        .auth-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .auth-buttons button {
+            margin-left: 0;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .btn-login {
+            background-color: transparent;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+        
+        .btn-login:hover {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-signup {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-signup:hover {
+            background-color: #3367d6;
+        }
+        
+        .btn-logout {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        .btn-logout:hover {
+            background-color: #d33426;
+        }
+        
+        main {
+            padding: 40px 0;
+        }
+        
+        .hero {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+            color: var(--dark-color);
+        }
+        
+        .hero p {
+            font-size: 1.1rem;
+            color: #666;
+            max-width: 700px;
+            margin: 0 auto 25px;
+        }
+        
+        .upload-container {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 6px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+        
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background-color: rgba(66, 133, 244, 0.05);
+        }
+        
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 15px;
+        }
+        
+        .upload-text {
+            margin-bottom: 15px;
+        }
+        
+        .btn-upload {
+            display: inline-block;
+            background-color: var(--primary-color);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+        
+        .btn-upload:hover {
+            background-color: #3367d6;
+        }
+        
+        .files-container h2 {
+            margin-bottom: 20px;
+            color: var(--dark-color);
+        }
+        
+        .files-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .file-card {
+            min-height: 240px; /* hoặc giá trị phù hợp */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background-color: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .file-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .file-header {
+            display: flex;
+            align-items: flex-start;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            gap: 10px;
+            position: relative;
+        }
+        
+        .file-thumb-wrap {
+            width: 72px;
+            height: 72px;
+            flex-shrink: 0;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-left: 10px;
+            box-shadow: 0 1px 4px #0001;
+            background: #f5f5f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .file-thumbnail {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center;
+            display: block;
+        }
+        
+        .file-info {
+            flex: 1;
+            min-width: 0;
+            min-height: 120px; /* đảm bảo phần thông tin luôn đủ chỗ */
+        }
+        
+        .file-name {
+            font-weight: 500;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 1.05rem;
+        }
+        
+        .file-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #4285f4;
+            margin-bottom: 3px;
+        }
+        
+        .file-meta {
+            font-size: 0.85rem;
+            color: #777;
+            word-break: break-word;
+            margin-top: 2px;
+        }
+        
+        .file-actions {
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            border-top: 1px solid #eee;
+            background: #fafbfc;
+        }
+        
+        .btn-download, .btn-delete {
+            min-width: 90px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background-color: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            padding: 30px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-title {
+            font-size: 1.3rem;
+            font-weight: 500;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #777;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 30px;
+        }
+        
+        .btn-cancel {
+            background-color: #f1f1f1;
+            color: #333;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            margin-right: 10px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .btn-cancel:hover {
+            background-color: #e1e1e1;
+        }
+        
+        .btn-submit {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .btn-submit:hover {
+            background-color: #3367d6;
+        }
+        
+        .admin-panel {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .admin-panel h3 {
+            margin-bottom: 15px;
+            color: var(--dark-color);
+        }
+        
+        .no-files {
+            text-align: center;
+            padding: 40px 0;
+            color: #777;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+        }
+        
+        .admin-users-panel table {
+            width: 100%;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+        }
+        .admin-users-panel th, .admin-users-panel td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .admin-users-panel th {
+            background: #f5f5f5;
+        }
+        .admin-users-panel td:last-child {
+            text-align: center;
+        }
+        
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .files-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <nav>
+                <a href="#" class="logo">
+                    <img src="https://sf-static.upanhlaylink.com/img/image_20250802f6881f278743c5bc821e0955898cfd65.jpg" alt="ShareDocs logo - a blue document icon with a share symbol" />
+                    ShareDocs
+                </a>
+                <ul class="nav-links">
+                    <li><a href="#">Trang chủ</a></li>
+                    <li><a href="#">Tài liệu</a></li>
+                    <li><a href="#">Hướng dẫn</a></li>
+                    <li><a href="#">Liên hệ</a></li>
+                </ul>
+                <div class="auth-buttons">
+                    <button id="loginBtn" class="btn-login">Đăng nhập</button>
+                    <button id="signupBtn" class="btn-signup">Đăng ký</button>
+                    <button id="logoutBtn" class="btn-logout" style="display: none;">Đăng xuất</button>
+                    <button id="changeNameBtn" class="btn-signup" style="display: none;">Đổi tên</button>
+                    <button id="changePasswordBtn" class="btn-signup" style="display: none;">Đổi mật khẩu</button>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <h1>Chia sẻ tài liệu dễ dàng</h1>
+            <p>Lưu trữ và chia sẻ tài liệu của bạn với bạn bè một cách an toàn và tiện lợi. Tải lên, tải xuống và quản lý file đơn giản.</p>
+        </section>
+
+        <div id="adminPanel" class="admin-panel" style="display: none;">
+            <h3>Quản trị viên</h3>
+            <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
+        </div>
+
+        <section class="upload-container" id="uploadContainer" style="display: none;">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">
+                    <!-- SVG icon hoặc hình ảnh -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                </div>
+                <p class="upload-text">Kéo thả file vào đây hoặc click để chọn file</p>
+                <input type="file" id="fileInput" style="display: none;">
+                <button class="btn-upload" id="uploadBtn">Chọn file</button>
+            </div>
+        </section>
+
+    <!-- Login Modal -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đăng nhập</h3>
+                <button class="close-btn" id="closeLoginModal">&times;</button>
+            </div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Mật khẩu</label>
+                    <input type="password" id="loginPassword" class="form-control" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelLogin">Hủy</button>
+                    <button type="submit" class="btn-submit">Đăng nhập</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Signup Modal -->
+    <div class="modal" id="signupModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đăng ký</h3>
+                <button class="close-btn" id="closeSignupModal">&times;</button>
+            </div>
+            <form id="signupForm">
+                <div class="form-group">
+                    <label for="signupName">Họ và tên</label>
+                    <input type="text" id="signupName" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label for="signupEmail">Email</label>
+                    <input type="email" id="signupEmail" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label for="signupPassword">Mật khẩu</label>
+                    <input type="password" id="signupPassword" class="form-control" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelSignup">Hủy</button>
+                    <button type="submit" class="btn-submit">Đăng ký</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal xác nhận và nhập tiêu đề -->
+    <div class="modal" id="confirmUploadModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Xác nhận thông tin file</h3>
+                <button class="close-btn" id="closeConfirmUploadModal">&times;</button>
+            </div>
+            <form id="confirmUploadForm">
+                <div class="form-group">
+                    <label for="fileTitle">Tiêu đề tài liệu</label>
+                    <input type="text" id="fileTitle" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Thông tin file:</label>
+                    <div id="fileInfoPreview"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelConfirmUpload">Hủy</button>
+                    <button type="submit" class="btn-submit">Tải lên</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Panel (hidden by default) -->
+    <div class="admin-panel" id="adminPanel" style="display: none;">
+        <h3>Quản trị viên</h3>
+        <button id="createUserBtn" class="btn-signup">Tạo tài khoản mới</button>
+    </div>
+
+    <!-- Upload Container (hidden by default) -->
+    <section class="upload-container" id="uploadContainer" style="display: none;">
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+            </div>
+            <p class="upload-text">Kéo thả file vào đây hoặc click để chọn file</p>
+            <input type="file" id="fileInput" style="display: none;">
+            <button class="btn-upload" id="uploadBtn">Chọn file</button>
+        </div>
+    </section>
+
+    <!-- Files Container -->
+    <section class="files-container">
+        <h2>Tài liệu của bạn</h2>
+        <div class="files-list" id="filesList">
+            <div class="no-files">
+                <p>Bạn chưa có tài liệu nào. Hãy đăng nhập và tải lên tài liệu đầu tiên!</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Admin Users Panel (hidden by default) -->
+    <div class="admin-users-panel" id="adminUsersPanel" style="display:none; margin-bottom:30px;">
+        <h3>Quản lý tài khoản người dùng</h3>
+        <button id="refreshUsersBtn" class="btn-upload" style="margin-bottom:10px;">Làm mới danh sách</button>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>Họ tên</th>
+                    <th>Admin?</th>
+                    <th>Xóa</th>
+                </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+        </table>
+        <h4 style="margin-top:20px;">Thêm tài khoản mới</h4>
+        <form id="adminAddUserForm" style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="text" id="adminAddName" placeholder="Họ tên" required class="form-control" style="flex:1;">
+            <input type="email" id="adminAddEmail" placeholder="Email" required class="form-control" style="flex:1;">
+            <input type="password" id="adminAddPassword" placeholder="Mật khẩu" required class="form-control" style="flex:1;">
+            <button type="submit" class="btn-submit">Thêm</button>
+        </form>
+    </div>
+
+    <!-- Modal đổi tên -->
+    <div class="modal" id="changeNameModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đổi tên hiển thị</h3>
+                <button class="close-btn" id="closeChangeNameModal">&times;</button>
+            </div>
+            <form id="changeNameForm">
+                <div class="form-group">
+                    <label for="newDisplayName">Tên mới</label>
+                    <input type="text" id="newDisplayName" class="form-control" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelChangeName">Hủy</button>
+                    <button type="submit" class="btn-submit">Cập nhật</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal đổi mật khẩu -->
+    <div class="modal" id="changePasswordModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đổi mật khẩu</h3>
+                <button class="close-btn" id="closeChangePasswordModal">&times;</button>
+            </div>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label for="currentPassword">Mật khẩu hiện tại</label>
+                    <input type="password" id="currentPassword" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">Mật khẩu mới</label>
+                    <input type="password" id="newPassword" class="form-control" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelChangePassword">Hủy</button>
+                    <button type="submit" class="btn-submit">Đổi mật khẩu</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
