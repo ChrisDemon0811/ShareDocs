@@ -267,8 +267,15 @@
             filesList.innerHTML = `<div class="no-files"><p>Bạn chưa có tài liệu nào. Hãy đăng nhập và tải lên tài liệu đầu tiên!</p></div>`;
             return;
         }
+        // Sắp xếp các file theo ngày mới nhất
+        const docs = querySnapshot.docs.slice().sort((a, b) => {
+            const aTime = a.data().uploadedAt && a.data().uploadedAt.toDate ? a.data().uploadedAt.toDate().getTime() : 0;
+            const bTime = b.data().uploadedAt && b.data().uploadedAt.toDate ? b.data().uploadedAt.toDate().getTime() : 0;
+            return bTime - aTime;
+        });
+
         let html = '';
-        for (const docSnap of querySnapshot.docs) {
+        for (const docSnap of docs) {
             const data = docSnap.data();
             // Lấy tên người upload
             let uploaderName = 'Không rõ';
