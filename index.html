@@ -303,7 +303,7 @@
                         <div class="file-title">${data.title ? data.title : '(Không có tiêu đề)'}</div>
                         <div class="file-name">${data.name}</div>
                         <div class="file-meta">
-                            ${(data.size/1024).toFixed(1)} KB<br>
+                            ${formatFileSize(data.size)}<br>
                             Người up: ${uploaderName}<br>
                             Lúc: ${dateStr}
                         </div>
@@ -593,6 +593,18 @@
             document.getElementById('changePasswordBtn').style.display = 'none';
         }
     });
+
+    function formatFileSize(size) {
+        if (size >= 1024 * 1024 * 1024) {
+            return (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        } else if (size >= 1024 * 1024) {
+            return (size / (1024 * 1024)).toFixed(2) + ' MB';
+        } else if (size >= 1024) {
+            return (size / 1024).toFixed(1) + ' KB';
+        } else {
+            return size + ' B';
+        }
+    }
     </script>
     <style>
         :root {
