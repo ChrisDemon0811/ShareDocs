@@ -314,6 +314,8 @@
                 </div>
                 <div class="file-actions">
                     <a href="${data.url}" target="_blank" class="btn-download">Tải xuống</a>
+
+                    <a href="${data.url}" download="${data.name}" class="btn-download">Tải xuống</a>
                     ${canDelete ? `<button class="btn-delete" data-id="${docSnap.id}" data-publicid="${data.public_id}" data-uid="${data.uploadedBy}">Xóa</button>` : ''}
                 </div>
             </div>
