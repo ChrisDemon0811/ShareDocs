@@ -320,6 +320,26 @@
                 </div>
             </div>
             `;
+            const downloadUrl = data.url.replace('/upload/', '/upload/fl_attachment/');
+            html += `
+            <div class="file-card">
+                <div class="file-header">
+                    <div class="file-info" style="flex:1;">
+                        <div class="file-title">${data.title ? data.title : '(Không có tiêu đề)'}</div>
+                        <div class="file-name">${data.name}</div>
+                        <div class="file-meta">
+                            ${formatFileSize(data.size)}<br>
+                            Người up: ${uploaderName}<br>
+                            Lúc: ${dateStr}
+                        </div>
+                    </div>
+                    ${isImage ? `<div class="file-thumb-wrap"><img src="${data.url}" alt="${data.title || data.name}" class="file-thumbnail"></div>` : ''}
+                </div>
+                <div class="file-actions">
+                    <a href="${downloadUrl}" download="${data.name}" class="btn-download">Tải xuống</a>
+                    ${canDelete ? `<button class="btn-delete" data-id="${docSnap.id}" data-publicid="${data.public_id}" data-uid="${data.uploadedBy}">Xóa</button>` : ''}
+                </div>            </div>
+            `;
         }
         filesList.innerHTML = html;
 
@@ -597,6 +617,82 @@
             document.getElementById('changePasswordBtn').style.display = 'none';
         }
     });
+
+    function getFileExt(filename) {
+        if (!filename) return '';        const ext = filename.split('.').pop().toUpperCase();
+        if (ext.length > 6) return ext.slice(0, 6) + '...';
+        return ext;
+    }
+
+    // Tính năng quản lý người dùng (Admin)
+    document.getElementById('refreshUsersBtn').addEventListener('click', loadUsersTable);
+
+    async function deleteUserAccount(userId) {
+        // Chỉ admin mới có quyền xóa tài khoản người dùng khác
+        if (!window.isAdmin) {
+            alert('Bạn không có quyền thực hiện hành động này!');
+            return;
+        }
+        try {
+            // Xóa tài khoản khỏi Firestore            await deleteDoc(doc(db, 'users', userId));
+            alert('Đã xóa tài khoản người dùng!');
+            loadUsersTable();
+        } catch (error) {
+            alert('Lỗi: ' + error.message);
+        }
+    }
+
+    // Mặc định tải danh sách người dùng khi trang được tải
+    window.addEventListener('load', () => {
+        if (window.isAdmin) {
+            document.getElementById('adminPanel').style.display = 'block';
+            loadUsersTable();
+        }    });
+
+    // Tính năng thay đổi thông tin người dùng
+    document.getElementById('changeNameBtn').onclick = () => {
+        document.getElementById('changeNameModal').style.display = 'flex';
+    };
+    document.getElementById('closeChangeNameModal').onclick =
+    document.getElementById('cancelChangeName').onclick = () => {
+        document.getElementById('changeNameModal').style.display = 'none';
+    };
+    document.getElementById('changeNameForm').onsubmit = async function(e) {
+        e.preventDefault();
+        const newName = document.getElementById('newDisplayName').value.trim();
+        if (!newName) return;
+        const user = auth.currentUser;
+        if (!user) return;
+        await setDoc(doc(db, 'users', user.uid), { name: newName }, { merge: true });        alert('Đã đổi tên!');
+        document.getElementById('changeNameModal').style.display = 'none';
+        loadFiles();
+    };
+
+    // Tính năng đổi mật khẩu
+    document.getElementById('changePasswordBtn').onclick = () => {
+        document.getElementById('changePasswordModal').style.display = 'flex';
+    };
+    document.getElementById('closeChangePasswordModal').onclick =
+    document.getElementById('cancelChangePassword').onclick = () => {
+        document.getElementById('changePasswordModal').style.display = 'none';
+    };
+    document.getElementById('changePasswordForm').onsubmit = async function(e) {
+        e.preventDefault();
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const user = auth.currentUser;
+        if (!user || !user.email) return;
+        try {
+            // Re-authenticate
+            const credential = EmailAuthProvider.credential(user.email, currentPassword);
+            await reauthenticateWithCredential(user, credential);
+            await updatePassword(user, newPassword);
+            alert('Đổi mật khẩu thành công!');
+            document.getElementById('changePasswordModal').style.display = 'none';
+        } catch (err) {
+            alert('Lỗi: ' + err.message);
+        }
+    };
 
     const MAX_STORAGE = 25 * 1024 * 1024 * 1024; // 25GB
 
@@ -1282,6 +1378,55 @@
             <input type="password" id="adminAddPassword" placeholder="Mật khẩu" required class="form-control" style="flex:1;">
             <button type="submit" class="btn-submit">Thêm</button>
         </form>
+    </div>
+
+    <!-- Files Container -->
+    <section class="files-container">
+        <h2>Tài liệu của bạn</h2>
+        <div class="files-list" id="filesList">
+            <div class="no-files">
+                <p>Bạn chưa có tài liệu nào. Hãy đăng nhập và tải lên tài liệu đầu tiên!</p>            </div>
+        </div>
+    </section>
+
+    <!-- Admin Users Panel (hidden by default) -->
+    <div class="admin-users-panel" id="adminUsersPanel" style="display:none; margin-bottom:30px;">
+        <h3>Quản lý tài khoản người dùng</h3>
+        <button id="refreshUsersBtn" class="btn-upload" style="margin-bottom:10px;">Làm mới danh sách</button>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>Họ tên</th>
+                    <th>Admin?</th>
+                    <th>Xóa</th>
+                </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+        </table>        <h4 style="margin-top:20px;">Thêm tài khoản mới</h4>
+        <form id="adminAddUserForm" style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="text" id="adminAddName" placeholder="Họ tên" required class="form-control" style="flex:1;">
+            <input type="email" id="adminAddEmail" placeholder="Email" required class="form-control" style="flex:1;">
+            <input type="password" id="adminAddPassword" placeholder="Mật khẩu" required class="form-control" style="flex:1;">
+            <button type="submit" class="btn-submit">Thêm</button>
+        </form>
+    </div>
+
+    <!-- Modal đổi tên -->
+    <div class="modal" id="changeNameModal">        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đổi tên hiển thị</h3>
+                <button class="close-btn" id="closeChangeNameModal">&times;</button>
+            </div>
+            <form id="changeNameForm">
+                <div class="form-group">
+                    <label for="newDisplayName">Tên mới</label>                    <input type="text" id="newDisplayName" class="form-control" required>
+                </div>                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" id="cancelChangeName">Hủy</button>
+                    <button type="submit" class="btn-submit">Cập nhật</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Modal đổi tên -->
